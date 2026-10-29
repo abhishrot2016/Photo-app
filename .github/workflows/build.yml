@@ -29,8 +29,10 @@ jobs:
           fi
           sed -i '/defaultConfig {/a \    multiDexEnabled true' android/app/build.gradle
       - run: flutter pub get
-      - name: Build APK with Verbose Logs
-        run: flutter build apk --release --verbose
+      - name: Analyze Dart Code
+        run: flutter analyze
+      - name: Build APK
+        run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
           name: app-release
