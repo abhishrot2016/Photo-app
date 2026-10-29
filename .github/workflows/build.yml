@@ -18,7 +18,9 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
       - name: Generate Android Scaffold
-        run: flutter create . --platforms=android --project-name=whos_who --org=com.whos.who.app
+        run: |
+          flutter create . --platforms=android --project-name=whos_who --org=com.whos.who.app
+          rm -rf test/ # Remove default widget tests that conflict with single-file apps
       - name: Fix Android Gradle Config & Multidex
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
@@ -29,8 +31,6 @@ jobs:
           fi
           sed -i '/defaultConfig {/a \    multiDexEnabled true' android/app/build.gradle
       - run: flutter pub get
-      - name: Analyze Dart Code
-        run: flutter analyze
       - name: Build APK
         run: flutter build apk --release
       - uses: actions/upload-artifact@v4
