@@ -20,7 +20,7 @@ jobs:
       - name: Generate Android Scaffold
         run: flutter create . --platforms=android --project-name=whos_who --org=com.whos.who.app
       - run: flutter pub get
-      - run: flutter build apk --release
+      - run: flutter build apk --release --verbose
       - uses: actions/upload-artifact@v4
         with:
           name: app-release
