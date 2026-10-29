@@ -313,7 +313,7 @@ class _EditPageState extends State<EditPage> {
               height: 260,
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                color: Theme.of(context).colorScheme.surfaceVariant,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: shown == null
