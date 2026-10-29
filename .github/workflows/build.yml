@@ -27,11 +27,12 @@ jobs:
           if ! grep -q "namespace" android/app/build.gradle; then
             sed -i 's/android {/android {\n    namespace "com.whos.who.app"/g' android/app/build.gradle
           fi
-          # Enable multidex for plugins
           sed -i '/defaultConfig {/a \    multiDexEnabled true' android/app/build.gradle
       - run: flutter pub get
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build APK with Detailed Info
+        run: |
+          cd android
+          ./gradlew assembleRelease --info
       - uses: actions/upload-artifact@v4
         with:
           name: app-release
