@@ -17,10 +17,34 @@ jobs:
         with:
           flutter-version: '3.19.x'
           channel: 'stable'
-      - name: Generate Android Scaffold
+      - name: Generate Scaffold & Setup Pubspec
         run: |
           flutter create . --platforms=android --project-name=whos_who --org=com.whos.who.app
-          rm -rf test/ # Remove default widget tests that conflict with single-file apps
+          rm -rf test/
+          # Write all required dependencies into pubspec.yaml automatically
+          cat << 'EOF' > pubspec.yaml
+          name: whos_who
+          description: "A small offline app for remembering faces and names."
+          publish_to: 'none'
+          version: 1.0.0+1
+
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+
+          dependencies:
+            flutter:
+              sdk: flutter
+            sqflite: ^2.3.0
+            path_provider: ^2.1.1
+            path: ^1.8.3
+            image_picker: ^1.0.4
+            archive: ^3.4.10
+            share_plus: ^7.2.1
+            file_picker: ^6.1.1
+
+          flutter:
+            uses-material-design: true
+          EOF
       - name: Fix Android Gradle Config & Multidex
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
@@ -37,3 +61,4 @@ jobs:
         with:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          
