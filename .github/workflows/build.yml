@@ -19,8 +19,11 @@ jobs:
           channel: 'stable'
       - name: Generate Android Scaffold
         run: flutter create . --platforms=android --project-name=whos_who --org=com.whos.who.app
+      - name: Fix Min SDK for Packages
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
       - run: flutter pub get
-      - run: flutter build apk --release --verbose
+      - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
           name: app-release
