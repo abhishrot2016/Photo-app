@@ -1,6 +1,6 @@
 // Who's Who: a small offline app for remembering faces and names.
 // Photos are shrunk and kept in the app's private storage on the phone;
-// names and notes live in a local SQLite database. No internet is used.
+// names, categories, and notes live in a local SQLite database. No internet is used.
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -12,34 +12,54 @@ import 'package:sqflite/sqflite.dart';
 late final Database db;
 late final String photosDir;
 
+final List<String> kCategories = ['Family', 'Friends', 'Classmates', 'Colleagues', 'Others'];
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final docs = await getApplicationDocumentsDirectory();
   photosDir = p.join(docs.path, 'photos');
   await Directory(photosDir).create(recursive: true);
+  
   db = await openDatabase(
     p.join(await getDatabasesPath(), 'whos_who.db'),
-    version: 1,
-    onCreate: (d, _) => d.execute(
-      'CREATE TABLE people('
-      'id INTEGER PRIMARY KEY AUTOINCREMENT, '
-      'name TEXT NOT NULL, description TEXT NOT NULL, photo TEXT NOT NULL)',
-    ),
+    version: 2,
+    onCreate: (d, v) async {
+      await d.execute(
+        'CREATE TABLE people('
+        'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'name TEXT NOT NULL, '
+        'category TEXT NOT NULL, '
+        'description TEXT NOT NULL, '
+        'photo TEXT NOT NULL)',
+      );
+    },
+    onUpgrade: (d, oldVersion, newVersion) async {
+      if (oldVersion < 2) {
+        await d.execute('ALTER TABLE people ADD COLUMN category TEXT NOT NULL DEFAULT "Friends"');
+      }
+    },
   );
   runApp(const WhosWhoApp());
 }
 
 class Person {
-  Person({this.id, required this.name, required this.description, required this.photo});
+  Person({
+    this.id,
+    required this.name,
+    required this.category,
+    required this.description,
+    required this.photo,
+  });
 
   final int? id;
-  final String name, description, photo; // photo = file name inside photosDir
+  final String name, category, description, photo; // photo = file name inside photosDir
 
   factory Person.fromMap(Map<String, Object?> m) => Person(
-        id: m['id'] as int,
-        name: m['name'] as String,
-        description: m['description'] as String,
-        photo: m['photo'] as String,
+        id: m['id'] as int?,
+        name: m['name'] as String? ?? '',
+        category: m['category'] as String? ?? 'Friends',
+        description: m['description'] as String? ?? '',
+        photo: m['photo'] as String? ?? '',
       );
 
   File get file => File(p.join(photosDir, photo));
@@ -49,22 +69,51 @@ class Person {
   }
 }
 
-class WhosWhoApp extends StatelessWidget {
+class WhosWhoApp extends StatefulWidget {
   const WhosWhoApp({super.key});
+
+  @override
+  State<WhosWhoApp> createState() => _WhosWhoAppState();
+}
+
+class _WhosWhoAppState extends State<WhosWhoApp> {
+  ThemeMode _themeMode = ThemeMode.light;
+
+  void _toggleTheme() {
+    setState(() {
+      _themeMode = _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: "Who's Who",
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(colorSchemeSeed: const Color(0xFF2A6F77), useMaterial3: true),
-        home: const HomePage(),
+        themeMode: _themeMode,
+        theme: ThemeData(
+          colorSchemeSeed: const Color(0xFF2A6F77),
+          useMaterial3: true,
+          brightness: Brightness.light,
+        ),
+        darkTheme: ThemeData(
+          colorSchemeSeed: const Color(0xFF2A6F77),
+          useMaterial3: true,
+          brightness: Brightness.dark,
+        ),
+        home: HomePage(
+          onToggleTheme: _toggleTheme,
+          currentThemeMode: _themeMode,
+        ),
       );
 }
 
 // ---------------------------------------------------------------- list screen
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, required this.onToggleTheme, required this.currentThemeMode});
+
+  final VoidCallback onToggleTheme;
+  final ThemeMode currentThemeMode;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -73,6 +122,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<Person> _people = [];
   String _query = '';
+  String _selectedFilter = 'All';
 
   @override
   void initState() {
@@ -82,12 +132,24 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _load() async {
     final q = '%$_query%';
-    final rows = await db.query(
-      'people',
-      where: 'name LIKE ? OR description LIKE ?',
-      whereArgs: [q, q],
-      orderBy: 'name COLLATE NOCASE',
-    );
+    List<Map<String, Object?>> rows;
+
+    if (_selectedFilter == 'All') {
+      rows = await db.query(
+        'people',
+        where: 'name LIKE ? OR description LIKE ?',
+        whereArgs: [q, q],
+        orderBy: 'name COLLATE NOCASE',
+      );
+    } else {
+      rows = await db.query(
+        'people',
+        where: 'category = ? AND (name LIKE ? OR description LIKE ?)',
+        whereArgs: [_selectedFilter, q, q],
+        orderBy: 'name COLLATE NOCASE',
+      );
+    }
+
     if (mounted) setState(() => _people = rows.map(Person.fromMap).toList());
   }
 
@@ -98,8 +160,19 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final filterOptions = ['All', ...kCategories];
+
     return Scaffold(
-      appBar: AppBar(title: const Text("Who's Who")),
+      appBar: AppBar(
+        title: const Text("Who's Who"),
+        actions: [
+          IconButton(
+            icon: Icon(widget.currentThemeMode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode),
+            tooltip: 'Toggle Dark Mode',
+            onPressed: widget.onToggleTheme,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -116,15 +189,40 @@ class _HomePageState extends State<HomePage> {
               },
             ),
           ),
+          // Category Filter Chips
+          SizedBox(
+            height: 48,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              children: filterOptions.map((cat) {
+                final isSelected = _selectedFilter == cat;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: ChoiceChip(
+                    label: Text(cat),
+                    selected: isSelected,
+                    onSelected: (selected) {
+                      setState(() {
+                        _selectedFilter = cat;
+                      });
+                      _load();
+                    },
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 4),
           Expanded(
             child: _people.isEmpty
                 ? Center(
                     child: Padding(
                       padding: const EdgeInsets.all(32),
                       child: Text(
-                        _query.isEmpty
-                            ? 'Nobody saved yet.\nTap "Add person" to save a photo and a few notes.'
-                            : 'No one matches "$_query".',
+                        _query.isEmpty && _selectedFilter == 'All'
+                            ? 'Nobody saved yet.\nTap "Add person" to save a photo and notes.'
+                            : 'No one found in "$_selectedFilter".',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyLarge,
                       ),
@@ -152,7 +250,22 @@ class _HomePageState extends State<HomePage> {
                           person.name,
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                         ),
-                        subtitle: Text(person.description, maxLines: 2, overflow: TextOverflow.ellipsis),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 2),
+                            Text(
+                              '📁 ${person.category}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(person.description, maxLines: 2, overflow: TextOverflow.ellipsis),
+                          ],
+                        ),
                         onTap: () => _open(DetailPage(person: person)),
                       );
                     },
@@ -221,6 +334,15 @@ class DetailPage extends StatelessWidget {
             child: Image.file(person.file, width: double.infinity, fit: BoxFit.fitWidth),
           ),
           const SizedBox(height: 16),
+          Row(
+            children: [
+              Chip(
+                label: Text(person.category),
+                avatar: const Icon(Icons.folder, size: 16),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Text(person.name, style: text.headlineMedium),
           const SizedBox(height: 8),
           Text(person.description.isEmpty ? 'No notes.' : person.description, style: text.bodyLarge),
@@ -245,6 +367,7 @@ class _EditPageState extends State<EditPage> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.person?.name);
   late final _desc = TextEditingController(text: widget.person?.description);
+  late String _category = widget.person?.category ?? 'Friends';
   File? _picked; // new photo chosen but not saved yet
 
   @override
@@ -260,7 +383,6 @@ class _EditPageState extends State<EditPage> {
 
   Future<void> _pick(ImageSource source) async {
     try {
-      // Shrunk to at most 800 px and re-compressed: small file, still easy to recognise.
       final x = await ImagePicker().pickImage(
         source: source,
         maxWidth: 800,
@@ -288,6 +410,7 @@ class _EditPageState extends State<EditPage> {
     }
     final values = <String, Object?>{
       'name': _name.text.trim(),
+      'category': _category,
       'description': _desc.text.trim(),
       'photo': photo,
     };
@@ -346,6 +469,23 @@ class _EditPageState extends State<EditPage> {
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(labelText: 'Name', border: OutlineInputBorder()),
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter a name.' : null,
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              value: _category,
+              decoration: const InputDecoration(
+                labelText: 'Category / Folder',
+                border: OutlineInputBorder(),
+              ),
+              items: kCategories.map((cat) {
+                return DropdownMenuItem(
+                  value: cat,
+                  child: Text(cat),
+                );
+              }).toList(),
+              onChanged: (val) {
+                if (val != null) setState(() => _category = val);
+              },
             ),
             const SizedBox(height: 16),
             TextFormField(
