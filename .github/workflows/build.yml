@@ -19,11 +19,15 @@ jobs:
           channel: 'stable'
       - name: Generate Android Scaffold
         run: flutter create . --platforms=android --project-name=whos_who --org=com.whos.who.app
-      - name: Fix Min SDK for Packages
+      - name: Fix Android Gradle Config
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          # Ensure namespace is present in android/app/build.gradle
+          if ! grep -q "namespace" android/app/build.gradle; then
+            sed -i 's/android {/android {\n    namespace "com.whos.who.app"/g' android/app/build.gradle
+          fi
       - run: flutter pub get
-      - run: flutter build apk --release
+      - run: flutter build apk --release --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: app-release
