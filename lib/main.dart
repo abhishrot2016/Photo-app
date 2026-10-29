@@ -1,16 +1,18 @@
-// Who's Who: a small offline app for remembering faces and names.
-// Photos are shrunk and kept in the app's private storage on the phone;
-// names, categories, and notes live in a local SQLite database. No internet is used.
+// Who's Who: offline app with Folders, Dark Mode, and Backup/Restore.
 import 'dart:io';
 
+import 'package:archive/archive_io.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:sqflite/sqflite.dart';
 
-late final Database db;
-late final String photosDir;
+late Database db;
+late String photosDir;
+late String dbPath;
 
 final List<String> kCategories = ['Family', 'Friends', 'Classmates', 'Colleagues', 'Others'];
 
@@ -20,8 +22,15 @@ Future<void> main() async {
   photosDir = p.join(docs.path, 'photos');
   await Directory(photosDir).create(recursive: true);
   
+  dbPath = p.join(await getDatabasesPath(), 'whos_who.db');
+  await _initDatabase();
+
+  runApp(const WhosWhoApp());
+}
+
+Future<void> _initDatabase() async {
   db = await openDatabase(
-    p.join(await getDatabasesPath(), 'whos_who.db'),
+    dbPath,
     version: 2,
     onCreate: (d, v) async {
       await d.execute(
@@ -39,7 +48,6 @@ Future<void> main() async {
       }
     },
   );
-  runApp(const WhosWhoApp());
 }
 
 class Person {
@@ -52,7 +60,7 @@ class Person {
   });
 
   final int? id;
-  final String name, category, description, photo; // photo = file name inside photosDir
+  final String name, category, description, photo;
 
   factory Person.fromMap(Map<String, Object?> m) => Person(
         id: m['id'] as int?,
@@ -107,8 +115,6 @@ class _WhosWhoAppState extends State<WhosWhoApp> {
       );
 }
 
-// ---------------------------------------------------------------- list screen
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.onToggleTheme, required this.currentThemeMode});
 
@@ -155,7 +161,90 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _open(Widget page) async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => page));
-    _load(); // refresh after adding, editing or deleting
+    _load();
+  }
+
+  void _toast(String message) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // --- EXPORT BACKUP TO NEW PHONE ---
+  Future<void> _exportBackup() async {
+    try {
+      final encoder = ZipFileEncoder();
+      final tempDir = await getTemporaryDirectory();
+      final backupFile = File(p.join(tempDir.path, 'whos_who_backup.zip'));
+      if (await backupFile.exists()) await backupFile.delete();
+
+      encoder.create(backupFile.path);
+      // Add database file
+      encoder.addFile(File(dbPath));
+      // Add all photos directory
+      encoder.addDirectory(Directory(photosDir));
+      encoder.close();
+
+      // Share the file via Bluetooth, Nearby Share, WhatsApp, etc.
+      await Share.shareXFiles([XFile(backupFile.path)], text: 'Who\'s Who Offline Backup');
+    } catch (e) {
+      _toast('Failed to create backup: $e');
+    }
+  }
+
+  // --- IMPORT BACKUP FROM OLD PHONE ---
+  Future<void> _importBackup() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(type: FileType.any);
+      if (result == null || result.files.single.path == null) return;
+
+      final zipFile = File(result.files.single.path!);
+      
+      // Confirm import
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('Restore Backup?'),
+          content: const Text('This will merge or overwrite current data with the backup file.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Restore')),
+          ],
+        ),
+      );
+
+      if (confirm != true) return;
+
+      // Extract zip bytes
+      final bytes = await zipFile.readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      final docs = await getApplicationDocumentsDirectory();
+
+      for (final file in archive) {
+        final filename = file.name;
+        if (file.isFile) {
+          final data = file.content as List<int>;
+          // Check if it's database or photo
+          if (filename.endsWith('.db')) {
+            File(dbPath)
+              ..createSync(recursive: true)
+              ..writeAsBytesSync(data);
+          } else {
+            File(p.join(docs.path, filename))
+              ..createSync(recursive: true)
+              ..writeAsBytesSync(data);
+          }
+        }
+      }
+
+      // Re-initialize database connection
+      await db.close();
+      await _initDatabase();
+      await _load();
+
+      _toast('Backup restored successfully!');
+    } catch (e) {
+      _toast('Failed to restore backup: $e');
+    }
   }
 
   @override
@@ -170,6 +259,16 @@ class _HomePageState extends State<HomePage> {
             icon: Icon(widget.currentThemeMode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode),
             tooltip: 'Toggle Dark Mode',
             onPressed: widget.onToggleTheme,
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'export') _exportBackup();
+              if (value == 'import') _importBackup();
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'export', child: Text('📤 Export Backup (.zip)')),
+              const PopupMenuItem(value: 'import', child: Text('📥 Restore Backup (.zip)')),
+            ],
           ),
         ],
       ),
@@ -189,7 +288,6 @@ class _HomePageState extends State<HomePage> {
               },
             ),
           ),
-          // Category Filter Chips
           SizedBox(
             height: 48,
             child: ListView(
@@ -229,7 +327,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   )
                 : ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 88), // room for the button
+                    padding: const EdgeInsets.only(bottom: 88),
                     itemCount: _people.length,
                     itemBuilder: (_, i) {
                       final person = _people[i];
@@ -357,7 +455,7 @@ class DetailPage extends StatelessWidget {
 class EditPage extends StatefulWidget {
   const EditPage({super.key, this.person});
 
-  final Person? person; // null = adding someone new
+  final Person? person;
 
   @override
   State<EditPage> createState() => _EditPageState();
@@ -368,7 +466,7 @@ class _EditPageState extends State<EditPage> {
   late final _name = TextEditingController(text: widget.person?.name);
   late final _desc = TextEditingController(text: widget.person?.description);
   late String _category = widget.person?.category ?? 'Friends';
-  File? _picked; // new photo chosen but not saved yet
+  File? _picked;
 
   @override
   void dispose() {
@@ -391,7 +489,7 @@ class _EditPageState extends State<EditPage> {
       );
       if (x != null && mounted) setState(() => _picked = File(x.path));
     } catch (_) {
-      _toast('Could not open the camera or your files. Check the app\'s permissions in Settings.');
+      _toast('Could not open the camera or your files. Check permissions in Settings.');
     }
   }
 
@@ -406,7 +504,7 @@ class _EditPageState extends State<EditPage> {
     if (_picked != null) {
       photo = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       await _picked!.copy(p.join(photosDir, photo));
-      await old?.deletePhoto(); // replace the old photo
+      await old?.deletePhoto();
     }
     final values = <String, Object?>{
       'name': _name.text.trim(),
