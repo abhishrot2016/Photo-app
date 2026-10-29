@@ -22,15 +22,15 @@ jobs:
       - name: Fix Android Gradle Config
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 34/g' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' android/app/build.gradle || true
           if ! grep -q "namespace" android/app/build.gradle; then
             sed -i 's/android {/android {\n    namespace "com.whos.who.app"/g' android/app/build.gradle
           fi
       - run: flutter pub get
-      - name: Build APK with Gradle Stacktrace
-        run: |
-          cd android
-          ./gradlew assembleRelease --stacktrace
+      - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          
